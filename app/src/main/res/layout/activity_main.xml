@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#121824"
+    android:padding="20dp">
+
+    <!-- Tiêu đề -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Calibrate dBA"
+        android:textColor="#FFFFFF"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:layout_marginBottom="16dp"/>
+
+    <!-- Hiển thị số dBA chính -->
+    <TextView
+        android:id="@+id/tvDbaValue"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="0.0 dBA"
+        android:textColor="#00E676"
+        android:textSize="52sp"
+        android:textStyle="bold"
+        android:gravity="center" />
+
+    <!-- Thông số Min / Max & Trạng thái -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:id="@+id/tvMinMax"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Min: 0.0 dBA   |   Max: 0.0 dBA"
+            android:textColor="#B0BEC5"
+            android:textSize="14sp"
+            android:gravity="center" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Trạng thái: Đã dừng"
+        android:textColor="#FFD740"
+        android:textSize="14sp"
+        android:gravity="center"
+        android:layout_marginBottom="16dp"/>
+
+    <!-- Khung biểu đồ phổ tần số -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Phổ tần số (20 Hz - 20 kHz)"
+        android:textColor="#90A4AE"
+        android:textSize="12sp"
+        android:layout_marginBottom="6dp"/>
+
+    <com.example.calibratedba.SpectrumView
+        android:id="@+id/spectrumView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#1E2638" />
+
+    <!-- Cụm tinh chỉnh Calibration Offset -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#1E2638"
+        android:padding="12dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:id="@+id/tvOffset"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Hiệu chuẩn (Offset): 0.0 dB"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btnMinusOffset"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:text="-"
+            android:textSize="18sp" />
+
+        <Button
+            android:id="@+id/btnPlusOffset"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
+            android:text="+"
+            android:textSize="18sp" />
+    </LinearLayout>
+
+    <!-- Cụm nút điều khiển Bắt đầu / Dừng -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnStart"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:backgroundTint="#00C853"
+            android:text="BẮT ĐẦU"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnStop"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:backgroundTint="#D50000"
+            android:text="DỪNG"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:enabled="false" />
+    </LinearLayout>
+
+</LinearLayout>
