@@ -18,9 +18,17 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import java.util.Locale;
-import java.util.Random;
 
 public class MainActivity extends AppCompatActivity {
+
+    // 1. Nạp thư viện C++ (tên thư viện khớp với tên trong CMakeLists.txt)
+    static {
+        System.loadLibrary("calibratedba"); // Lưu ý: Tên này tùy thuộc vào cấu hình CMake của bạn
+    }
+
+    // 2. Khai báo 2 hàm native (C++ sẽ viết thân hàm cho các hàm này)
+    public native double nativeCalculateDBA(short[] pcmData, int readSize);
+    public native float[] nativeCalculateFFT(short[] pcmData, int readSize, int numBars);
 
     private static final int REQUEST_RECORD_AUDIO_PERMISSION = 200;
     private static final int SAMPLE_RATE = 44100; // Tần số lấy mẫu chuẩn 44.1kHz
@@ -42,7 +50,6 @@ public class MainActivity extends AppCompatActivity {
     private double maxDba = 0.0;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final Random random = new Random();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -179,43 +186,28 @@ public class MainActivity extends AppCompatActivity {
         recordingThread.start();
     }
 
-    // ================= XỬ LÝ DỮ LIỆU & DỮ LIỆU GIẢ LẬP (MOCK DATA) =================
+    // ================= XỬ LÝ DỮ LIỆU BẰNG NATIVE C++ (JNI) =================
     private void processAudioData(short[] pcmData, int readSize) {
-        /*
-         * TODO: KHI CÓ CODE C++ (JNI), CHỈ CẦN GỌI HÀM NATIVE TẠI ĐÂY:
-         * double rawDba = nativeCalculateDBA(pcmData, readSize);
-         * float[] spectrum = nativeCalculateFFT(pcmData, readSize);
-         */
+        // Gọi hàm C++ (JNI) để tính toán dBA thô và mảng phổ tần số FFT thực tế
+        double rawDba = nativeCalculateDBA(pcmData, readSize);
+        float[] spectrum = nativeCalculateFFT(pcmData, readSize, 32); // 32 tương ứng với số cột biểu đồ
 
-        // --- PHẦN DỮ LIỆU GIẢ LẬP ĐỂ TEST GIAO DIỆN ---
-        // Tính bộ biên độ âm thanh thực từ mảng PCM để số nhảy theo tiếng nói thật khi test
-        double sumSquares = 0;
-        for (int i = 0; i < readSize; i++) {
-            sumSquares += pcmData[i] * pcmData[i];
-        }
-        double rms = Math.sqrt(sumSquares / readSize);
+        // Áp dụng thông số hiệu chỉnh (offset) vào kết quả dBA thô
+        double finalDba = rawDba + calibrationOffset;
 
-        // Giả lập công thức đổi sang dBA + cộng với hệ số hiệu chuẩn (Offset)
-        double mockDba = (rms > 1) ? (20 * Math.log10(rms) - 10) : 30.0;
-        double finalDba = Math.max(25.0, Math.min(120.0, mockDba + calibrationOffset));
-
-        // Tạo mảng 32 cột tần số giả lập dựa theo độ lớn âm thanh
-        float[] mockSpectrum = new float[NUM_SPECTRUM_BARS];
-        for (int i = 0; i < NUM_SPECTRUM_BARS; i++) {
-            float baseLevel = (float) ((finalDba - 25.0) * 0.8);
-            mockSpectrum[i] = Math.max(5f, baseLevel + random.nextInt(35) - 15);
-        }
-        // --- KẾT THÚC PHẦN DỮ LIỆU GIẢ LẬP ---
-
-        // Cập nhật Min / Max
+        // Cập nhật giá trị Min / Max
         if (finalDba < minDba) minDba = finalDba;
         if (finalDba > maxDba) maxDba = finalDba;
-        // Đẩy kết quả về Main Thread (UI Thread) để vẽ giao diện
+
+        // Đẩy kết quả về Main Thread (UI Thread) để cập nhật giao diện
         mainHandler.post(() -> {
             if (!isRecording) return; // Tránh cập nhật trễ sau khi đã bấm Dừng
+
             tvDbaValue.setText(String.format(Locale.US, "%.1f dBA", finalDba));
-            tvMinMax.setText(String.format(Locale.US, "Min: %.1f dBA   |   Max: %.1f dBA", minDba, maxDba));
-            spectrumView.updateSpectrum(mockSpectrum);
+            tvMinMax.setText(String.format(Locale.US, "Min: %.1f dBA | Max: %.1f dBA", minDba, maxDba));
+
+            // Truyền mảng dữ liệu FFT thật thay vì mockSpectrum cũ
+            spectrumView.updateSpectrum(spectrum);
         });
     }
 
