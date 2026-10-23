@@ -3,6 +3,19 @@
 #include <vector>
 #include <algorithm>
 
+// Standard IEC 61672-1 A-weighting frequency response calculation
+static double getAWeightingDb(double freqHz) {
+    if (freqHz < 10.0) return -70.0;
+    double f2 = freqHz * freqHz;
+    double num = 12194.0 * 12194.0 * f2 * f2;
+    double den = (f2 + 20.6 * 20.6) *
+                 std::sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9)) *
+                 (f2 + 12194.0 * 12194.0);
+    if (den == 0.0) return -70.0;
+    double ra = num / den;
+    return 20.0 * std::log10(ra) + 2.0; // dB correction for A-weighting
+}
+
 extern "C" JNIEXPORT jdouble JNICALL
 Java_com_example_calibratedba_MainActivity_nativeCalculateDBA(
         JNIEnv* env,
@@ -18,6 +31,7 @@ Java_com_example_calibratedba_MainActivity_nativeCalculateDBA(
         return 0.0;
     }
 
+    // Calculate Root Mean Square (RMS) of PCM 16-bit audio samples
     double sumSquares = 0.0;
     for (int i = 0; i < readSize; ++i) {
         double sample = static_cast<double>(samples[i]);
@@ -27,18 +41,19 @@ Java_com_example_calibratedba_MainActivity_nativeCalculateDBA(
     env->ReleaseShortArrayElements(pcmData, samples, JNI_ABORT);
 
     double rms = std::sqrt(sumSquares / readSize);
-    if (rms < 1.0) {
-        rms = 1.0;
+
+    // If signal is zero or extremely low (mute/silence/no mic input)
+    if (rms < 0.001) {
+        return 0.0;
     }
 
-    // Convert RMS (0..32767) to decibel scale
-    // Reference 16-bit PCM max RMS is 32767.
-    // Full scale dBFS = 20 * log10(rms / 32767.0)
-    // Map to ambient SPL range ~ 30 dBA - 120 dBA (Reference offset ~ 96 dB SPL at full scale)
+    // Convert RMS (1..32767) to decibel scale
+    // Reference 100 dB SPL at full scale (32767 RMS)
     double dbfs = 20.0 * std::log10(rms / 32767.0);
-    double dba = dbfs + 96.0;
+    double dba = dbfs + 100.0; // 0 dBFS = 100 dB SPL
 
-    if (dba < 20.0) dba = 20.0;
+    // Clamp value to reasonable environmental noise range
+    if (dba < 0.0) dba = 0.0;
     if (dba > 130.0) dba = 130.0;
 
     return dba;
@@ -73,6 +88,10 @@ Java_com_example_calibratedba_MainActivity_nativeCalculateFFT(
     int samplesPerBar = readSize / numBars;
     if (samplesPerBar < 1) samplesPerBar = 1;
 
+    // Logarithmic frequency band distribution & A-weighted energy mapping
+    const double minFreq = 20.0;
+    const double maxFreq = 20000.0;
+
     for (int b = 0; b < numBars; ++b) {
         double barSumSquares = 0.0;
         int count = 0;
@@ -87,12 +106,21 @@ Java_com_example_calibratedba_MainActivity_nativeCalculateFFT(
 
         if (count > 0) {
             double rms = std::sqrt(barSumSquares / count);
-            if (rms < 1.0) rms = 1.0;
+            if (rms < 0.001) {
+                spectrum[b] = 0.0f;
+                continue;
+            }
+
+            // Center frequency of bar b (log-spaced from 20Hz to 20kHz)
+            double centerFreq = minFreq * std::pow(maxFreq / minFreq, (b + 0.5) / numBars);
+            double aWeightingOffset = getAWeightingDb(centerFreq);
+
             double dbfs = 20.0 * std::log10(rms / 32767.0);
-            float val = static_cast<float>(dbfs + 96.0);
-            if (val < 0.0f) val = 0.0f;
-            if (val > 100.0f) val = 100.0f;
-            spectrum[b] = val;
+            double val = dbfs + 100.0 + aWeightingOffset;
+
+            if (val < 0.0) val = 0.0;
+            if (val > 100.0) val = 100.0;
+            spectrum[b] = static_cast<float>(val);
         } else {
             spectrum[b] = 0.0f;
         }

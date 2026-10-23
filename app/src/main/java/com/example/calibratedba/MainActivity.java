@@ -45,9 +45,9 @@ public class MainActivity extends AppCompatActivity {
     private volatile boolean isRecording = false; // Flag an toàn giữa các luồng
 
     // Thông số đo lường
-    private double calibrationOffset = 0.0;
-    private double minDba = Double.MAX_VALUE;
-    private double maxDba = 0.0;
+    private volatile double calibrationOffset = 0.0;
+    private volatile double minDba = Double.MAX_VALUE;
+    private volatile double maxDba = 0.0;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -87,13 +87,13 @@ public class MainActivity extends AppCompatActivity {
 
         // Nút chỉnh Offset (+)
         btnPlusOffset.setOnClickListener(v -> {
-            calibrationOffset += 0.5;
+            calibrationOffset = calibrationOffset + 0.5;
             updateOffsetText();
         });
 
         // Nút chỉnh Offset (-)
         btnMinusOffset.setOnClickListener(v -> {
-            calibrationOffset -= 0.5;
+            calibrationOffset = calibrationOffset - 0.5;
             updateOffsetText();
         });
     }
@@ -142,15 +142,16 @@ public class MainActivity extends AppCompatActivity {
         }
 
         try {
-            // Dùng VOICE_RECOGNITION để lấy âm thanh thô ít bị hãng can thiệp
+            // Dùng AudioSource.MIC chuẩn hỗ trợ tốt nhất trên mọi thiết bị & Android Emulator
             audioRecord = new AudioRecord(
-                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    MediaRecorder.AudioSource.MIC,
                     SAMPLE_RATE,
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT,
                     minBufferSize
             );
         } catch (SecurityException e) {
+            Toast.makeText(this, "Chưa cấp quyền Microphone!", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -190,7 +191,7 @@ public class MainActivity extends AppCompatActivity {
     private void processAudioData(short[] pcmData, int readSize) {
         // Gọi hàm C++ (JNI) để tính toán dBA thô và mảng phổ tần số FFT thực tế
         double rawDba = nativeCalculateDBA(pcmData, readSize);
-        float[] spectrum = nativeCalculateFFT(pcmData, readSize, 32); // 32 tương ứng với số cột biểu đồ
+        float[] spectrum = nativeCalculateFFT(pcmData, readSize, NUM_SPECTRUM_BARS);
 
         // Áp dụng thông số hiệu chỉnh (offset) vào kết quả dBA thô
         double finalDba = rawDba + calibrationOffset;
