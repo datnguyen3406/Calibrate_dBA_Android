@@ -2,6 +2,8 @@ package com.example.calibratedba;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
@@ -23,11 +25,11 @@ public class MainActivity extends AppCompatActivity {
 
     // 1. Nạp thư viện C++ (tên thư viện khớp với tên trong CMakeLists.txt)
     static {
-        System.loadLibrary("calibratedba"); // Lưu ý: Tên này tùy thuộc vào cấu hình CMake của bạn
+        System.loadLibrary("calibratedba");
     }
 
-    // 2. Khai báo 2 hàm native (C++ sẽ viết thân hàm cho các hàm này)
-    public native double nativeCalculateDBA(short[] pcmData, int readSize);
+    // 2. Khai báo 2 hàm native
+    public native double[] nativeCalculateNoiseMetrics(short[] pcmData, int readSize, int sampleRate, double calibrationOffsetDbA);
     public native float[] nativeCalculateFFT(short[] pcmData, int readSize, int numBars);
 
     private static final int REQUEST_RECORD_AUDIO_PERMISSION = 200;
@@ -37,7 +39,7 @@ public class MainActivity extends AppCompatActivity {
     // UI Components
     private TextView tvDbaValue, tvMinMax, tvStatus, tvOffset;
     private SpectrumView spectrumView;
-    private Button btnStart, btnStop, btnPlusOffset, btnMinusOffset;
+    private Button btnStartStop, btnPlusOffset, btnMinusOffset;
 
     // Thu âm & Luồng (Thread)
     private AudioRecord audioRecord;
@@ -47,7 +49,7 @@ public class MainActivity extends AppCompatActivity {
     // Thông số đo lường
     private volatile double calibrationOffset = 0.0;
     private volatile double minDba = Double.MAX_VALUE;
-    private volatile double maxDba = 0.0;
+    private volatile double maxDba = -Double.MAX_VALUE;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -66,24 +68,24 @@ public class MainActivity extends AppCompatActivity {
         tvStatus = findViewById(R.id.tvStatus);
         tvOffset = findViewById(R.id.tvOffset);
         spectrumView = findViewById(R.id.spectrumView);
-        btnStart = findViewById(R.id.btnStart);
-        btnStop = findViewById(R.id.btnStop);
+        btnStartStop = findViewById(R.id.btnStartStop);
         btnPlusOffset = findViewById(R.id.btnPlusOffset);
         btnMinusOffset = findViewById(R.id.btnMinusOffset);
     }
 
     private void setupListeners() {
-        // Nút Bắt đầu
-        btnStart.setOnClickListener(v -> {
-            if (checkAudioPermission()) {
-                startRecording();
+        // Nút Bắt đầu / Dừng duy nhất (Toggle Button)
+        btnStartStop.setOnClickListener(v -> {
+            if (isRecording) {
+                stopRecording();
             } else {
-                requestAudioPermission();
+                if (checkAudioPermission()) {
+                    startRecording();
+                } else {
+                    requestAudioPermission();
+                }
             }
         });
-
-        // Nút Dừng
-        btnStop.setOnClickListener(v -> stopRecording());
 
         // Nút chỉnh Offset (+)
         btnPlusOffset.setOnClickListener(v -> {
@@ -142,7 +144,6 @@ public class MainActivity extends AppCompatActivity {
         }
 
         try {
-            // Dùng AudioSource.MIC chuẩn hỗ trợ tốt nhất trên mọi thiết bị & Android Emulator
             audioRecord = new AudioRecord(
                     MediaRecorder.AudioSource.MIC,
                     SAMPLE_RATE,
@@ -165,11 +166,11 @@ public class MainActivity extends AppCompatActivity {
 
         // Reset lại Min/Max mỗi lần bắt đầu mới
         minDba = Double.MAX_VALUE;
-        maxDba = 0.0;
+        maxDba = -Double.MAX_VALUE;
 
-        // Cập nhật trạng thái nút bấm
-        btnStart.setEnabled(false);
-        btnStop.setEnabled(true);
+        // Đổi nút thành DỪNG (màu đỏ)
+        btnStartStop.setText("DỪNG");
+        btnStartStop.setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#D50000")));
         tvStatus.setText("Trạng thái: Đang thu âm & phân tích (Recording)...");
 
         // Khởi tạo Background Thread để đọc PCM liên tục
@@ -189,27 +190,32 @@ public class MainActivity extends AppCompatActivity {
 
     // ================= XỬ LÝ DỮ LIỆU BẰNG NATIVE C++ (JNI) =================
     private void processAudioData(short[] pcmData, int readSize) {
-        // Gọi hàm C++ (JNI) để tính toán dBA thô và mảng phổ tần số FFT thực tế
-        double rawDba = nativeCalculateDBA(pcmData, readSize);
+        // 1. Gọi hàm C++ JNI tính toán các chỉ số LAeq, LAmax, LAmin đã lọc A-weighting
+        double[] metrics = nativeCalculateNoiseMetrics(pcmData, readSize, SAMPLE_RATE, calibrationOffset);
+        // 2. Gọi hàm C++ JNI tính mảng phổ tần số FFT
         float[] spectrum = nativeCalculateFFT(pcmData, readSize, NUM_SPECTRUM_BARS);
 
-        // Áp dụng thông số hiệu chỉnh (offset) vào kết quả dBA thô
-        double finalDba = rawDba + calibrationOffset;
+        if (metrics != null && metrics.length >= 3) {
+            double laeq = metrics[0];
+            double lamax = metrics[1];
+            double lamin = metrics[2];
 
-        // Cập nhật giá trị Min / Max
-        if (finalDba < minDba) minDba = finalDba;
-        if (finalDba > maxDba) maxDba = finalDba;
+            // Cập nhật Min / Max
+            if (lamin < minDba) minDba = lamin;
+            if (lamax > maxDba) maxDba = lamax;
 
-        // Đẩy kết quả về Main Thread (UI Thread) để cập nhật giao diện
-        mainHandler.post(() -> {
-            if (!isRecording) return; // Tránh cập nhật trễ sau khi đã bấm Dừng
+            // Đẩy kết quả về Main Thread (UI Thread) để cập nhật giao diện
+            mainHandler.post(() -> {
+                if (!isRecording) return; // Tránh cập nhật trễ sau khi bấm Dừng
 
-            tvDbaValue.setText(String.format(Locale.US, "%.1f dBA", finalDba));
-            tvMinMax.setText(String.format(Locale.US, "Min: %.1f dBA | Max: %.1f dBA", minDba, maxDba));
+                tvDbaValue.setText(String.format(Locale.US, "%.1f dBA", laeq));
+                tvMinMax.setText(String.format(Locale.US, "Min: %.1f dBA | Max: %.1f dBA", minDba, maxDba));
 
-            // Truyền mảng dữ liệu FFT thật thay vì mockSpectrum cũ
-            spectrumView.updateSpectrum(spectrum);
-        });
+                if (spectrum != null) {
+                    spectrumView.updateSpectrum(spectrum);
+                }
+            });
+        }
     }
 
     // ================= DỪNG THU ÂM & QUẢN LÝ VÒNG ĐỜI =================
@@ -237,9 +243,9 @@ public class MainActivity extends AppCompatActivity {
             audioRecord = null;
         }
 
-        // Cập nhật lại UI
-        btnStart.setEnabled(true);
-        btnStop.setEnabled(false);
+        // Đổi nút thành BẮT ĐẦU (màu xanh)
+        btnStartStop.setText("BẮT ĐẦU");
+        btnStartStop.setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#00C853")));
         tvStatus.setText("Trạng thái: Đã dừng");
         spectrumView.clear();
     }
@@ -247,7 +253,6 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onStop() {
         super.onStop();
-        // Tự động dừng thu âm khi người dùng ẩn app xuống nền (bấm nút Home / chuyển app)
         if (isRecording) {
             stopRecording();
         }

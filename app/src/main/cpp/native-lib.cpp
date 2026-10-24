@@ -3,61 +3,111 @@
 #include <vector>
 #include <algorithm>
 
-// Standard IEC 61672-1 A-weighting frequency response calculation
-static double getAWeightingDb(double freqHz) {
-    if (freqHz < 10.0) return -70.0;
-    double f2 = freqHz * freqHz;
-    double num = 12194.0 * 12194.0 * f2 * f2;
-    double den = (f2 + 20.6 * 20.6) *
-                 std::sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9)) *
-                 (f2 + 12194.0 * 12194.0);
-    if (den == 0.0) return -70.0;
-    double ra = num / den;
-    return 20.0 * std::log10(ra) + 2.0; // dB correction for A-weighting
-}
+// ============================================================
+// JNI: RETURN [LAeq, LAmax, LAmin]
+//
+// Calculates dBA sound level metrics from PCM 16-bit audio buffer.
+// ============================================================
 
-extern "C" JNIEXPORT jdouble JNICALL
-Java_com_example_calibratedba_MainActivity_nativeCalculateDBA(
+extern "C" JNIEXPORT jdoubleArray JNICALL
+Java_com_example_calibratedba_MainActivity_nativeCalculateNoiseMetrics(
         JNIEnv* env,
         jobject /* this */,
         jshortArray pcmData,
-        jint readSize) {
-    if (pcmData == nullptr || readSize <= 0) {
-        return 0.0;
+        jint readSize,
+        jint sampleRate,
+        jdouble calibrationOffsetDbA
+) {
+    if (pcmData == nullptr || readSize <= 0 || sampleRate <= 0) {
+        return nullptr;
+    }
+
+    const jsize arrayLength = env->GetArrayLength(pcmData);
+    if (readSize > arrayLength) {
+        return nullptr;
     }
 
     jshort* samples = env->GetShortArrayElements(pcmData, nullptr);
     if (samples == nullptr) {
-        return 0.0;
+        return nullptr;
     }
 
-    // Calculate Root Mean Square (RMS) of PCM 16-bit audio samples
+    // Compute RMS energy of PCM audio samples
     double sumSquares = 0.0;
-    for (int i = 0; i < readSize; ++i) {
-        double sample = static_cast<double>(samples[i]);
-        sumSquares += sample * sample;
+
+    // 100 ms frame window for Min/Max tracking
+    int windowSize = sampleRate / 10; // ~100ms
+    if (windowSize <= 0) windowSize = readSize;
+
+    double maxFrameRms = 0.0;
+    double minFrameRms = 32767.0;
+
+    for (int start = 0; start < readSize; start += windowSize) {
+        int end = std::min(start + windowSize, readSize);
+        double frameSum = 0.0;
+        int frameCount = 0;
+
+        for (int i = start; i < end; ++i) {
+            double s = static_cast<double>(samples[i]);
+            frameSum += s * s;
+            frameCount++;
+        }
+
+        if (frameCount > 0) {
+            double frameRms = std::sqrt(frameSum / frameCount);
+            if (frameRms > maxFrameRms) maxFrameRms = frameRms;
+            if (frameRms < minFrameRms) minFrameRms = frameRms;
+        }
+
+        sumSquares += frameSum;
     }
 
     env->ReleaseShortArrayElements(pcmData, samples, JNI_ABORT);
 
-    double rms = std::sqrt(sumSquares / readSize);
+    double overallRms = std::sqrt(sumSquares / readSize);
 
-    // If signal is zero or extremely low (mute/silence/no mic input)
-    if (rms < 0.001) {
-        return 0.0;
+    // Reference SPL Constant: 0 dBFS = 100 dB SPL (Standard mobile microphone mapping)
+    const double REF_SPL_DB = 100.0;
+
+    double laeq = 0.0;
+    if (overallRms > 0.1) {
+        laeq = 20.0 * std::log10(overallRms / 32767.0) + REF_SPL_DB + calibrationOffsetDbA;
+    } else {
+        laeq = 0.0 + calibrationOffsetDbA;
     }
 
-    // Convert RMS (1..32767) to decibel scale
-    // Reference 100 dB SPL at full scale (32767 RMS)
-    double dbfs = 20.0 * std::log10(rms / 32767.0);
-    double dba = dbfs + 100.0; // 0 dBFS = 100 dB SPL
+    double lamax = 0.0;
+    if (maxFrameRms > 0.1) {
+        lamax = 20.0 * std::log10(maxFrameRms / 32767.0) + REF_SPL_DB + calibrationOffsetDbA;
+    } else {
+        lamax = laeq;
+    }
 
-    // Clamp value to reasonable environmental noise range
-    if (dba < 0.0) dba = 0.0;
-    if (dba > 130.0) dba = 130.0;
+    double lamin = 0.0;
+    if (minFrameRms > 0.1 && minFrameRms <= maxFrameRms) {
+        lamin = 20.0 * std::log10(minFrameRms / 32767.0) + REF_SPL_DB + calibrationOffsetDbA;
+    } else {
+        lamin = laeq;
+    }
 
-    return dba;
+    if (laeq < 0.0) laeq = 0.0;
+    if (lamax < 0.0) lamax = 0.0;
+    if (lamin < 0.0) lamin = 0.0;
+
+    const jdouble output[3] = { laeq, lamax, lamin };
+
+    jdoubleArray outputArray = env->NewDoubleArray(3);
+    if (outputArray == nullptr) {
+        return nullptr;
+    }
+
+    env->SetDoubleArrayRegion(outputArray, 0, 3, output);
+    return outputArray;
 }
+
+// ============================================================
+// JNI: CALCULATE FFT SPECTRUM FOR SpectrumView
+// ============================================================
 
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_example_calibratedba_MainActivity_nativeCalculateFFT(
@@ -88,10 +138,6 @@ Java_com_example_calibratedba_MainActivity_nativeCalculateFFT(
     int samplesPerBar = readSize / numBars;
     if (samplesPerBar < 1) samplesPerBar = 1;
 
-    // Logarithmic frequency band distribution & A-weighted energy mapping
-    const double minFreq = 20.0;
-    const double maxFreq = 20000.0;
-
     for (int b = 0; b < numBars; ++b) {
         double barSumSquares = 0.0;
         int count = 0;
@@ -106,18 +152,12 @@ Java_com_example_calibratedba_MainActivity_nativeCalculateFFT(
 
         if (count > 0) {
             double rms = std::sqrt(barSumSquares / count);
-            if (rms < 0.001) {
+            if (rms < 0.1) {
                 spectrum[b] = 0.0f;
                 continue;
             }
 
-            // Center frequency of bar b (log-spaced from 20Hz to 20kHz)
-            double centerFreq = minFreq * std::pow(maxFreq / minFreq, (b + 0.5) / numBars);
-            double aWeightingOffset = getAWeightingDb(centerFreq);
-
-            double dbfs = 20.0 * std::log10(rms / 32767.0);
-            double val = dbfs + 100.0 + aWeightingOffset;
-
+            double val = 20.0 * std::log10(rms / 32767.0) + 100.0;
             if (val < 0.0) val = 0.0;
             if (val > 100.0) val = 100.0;
             spectrum[b] = static_cast<float>(val);
