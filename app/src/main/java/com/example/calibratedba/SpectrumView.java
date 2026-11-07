@@ -72,10 +72,26 @@ public class SpectrumView extends View {
     }
 
     public void updateSpectrum(float[] newMagnitudes) {
-        if (newMagnitudes != null) {
-            this.magnitudes = newMagnitudes;
-            invalidate();
+        if (newMagnitudes == null) return;
+
+        // Hệ số làm mượt:
+        // Khi cột đi lên (Attack): phản hồi nhanh (lấy 60% giá trị mới, 40% giá trị cũ)
+        // Khi cột rơi xuống (Release): rơi từ từ cho mượt mắt (lấy 20% giá trị mới, 80% giá trị cũ)
+        final float ATTACK_FACTOR = 0.6f;
+        final float RELEASE_FACTOR = 0.2f;
+
+        int length = Math.min(this.magnitudes.length, newMagnitudes.length);
+        for (int i = 0; i < length; i++) {
+            float current = this.magnitudes[i];
+            float target = newMagnitudes[i];
+
+            if (target > current) {
+                this.magnitudes[i] = current + ATTACK_FACTOR * (target - current);
+            } else {
+                this.magnitudes[i] = current + RELEASE_FACTOR * (target - current);
+            }
         }
+        invalidate();
     }
 
     public void clear() {
@@ -92,7 +108,7 @@ public class SpectrumView extends View {
         int height = getHeight();
 
         // Định nghĩa khoảng lề (Padding) để chừa chỗ ghi chữ cho các trục và Legend
-        float leftPadding = dpToPx(54);   // Chừa chỗ bên trái cho trục Y (dB)
+        float leftPadding = dpToPx(68);   // Chừa chỗ bên trái cho trục Y (dB)
         float rightPadding = dpToPx(14);  // Chừa lề phải
         float topPadding = dpToPx(34);    // Chừa chỗ phía trên cho Chú thích màu (Legend)
         float bottomPadding = dpToPx(28); // Chừa chỗ bên dưới cho trục X (Hz)
@@ -126,10 +142,9 @@ public class SpectrumView extends View {
                     gridPaint
             );
 
-            double dbfs = -110.0 + level * 0.8;
-
+            // Hiển thị trực tiếp 0 dB, 25 dB, 50 dB, 75 dB, 100 dB
             canvas.drawText(
-                    String.format(Locale.US, "%.0f dBFS", dbfs),
+                    String.format(Locale.US, "%d dB", level),
                     chartLeft - dpToPx(6),
                     y + dpToPx(3),
                     textPaint

@@ -30,7 +30,7 @@ public class MainActivity extends AppCompatActivity {
 
     // 2. Khai báo 2 hàm native
     public native double[] nativeCalculateNoiseMetrics(short[] pcmData, int readSize, int sampleRate, double calibrationOffsetDbA);
-    public native float[] nativeCalculateFFT(short[] pcmData, int readSize, int numBars);
+    public native float[] nativeCalculateFFT(short[] pcmData, int readSize, int numBars, double calibrationOffsetDbA);
     public native void nativeResetMeasurement();
 
     private static final int REQUEST_RECORD_AUDIO_PERMISSION = 200;
@@ -193,32 +193,76 @@ public class MainActivity extends AppCompatActivity {
 
     // ================= XỬ LÝ DỮ LIỆU BẰNG NATIVE C++ (JNI) =================
     private void processAudioData(short[] pcmData, int readSize) {
-        // 1. Gọi hàm C++ JNI tính toán các chỉ số LAeq, LAmax, LAmin đã lọc A-weighting
-        double[] metrics = nativeCalculateNoiseMetrics(pcmData, readSize, SAMPLE_RATE, calibrationOffset);
-        // 2. Gọi hàm C++ JNI tính mảng phổ tần số FFT
-        float[] spectrum = nativeCalculateFFT(pcmData, readSize, NUM_SPECTRUM_BARS);
+
+        // 1. Calculate A-weighted sound metrics
+        double[] metrics = nativeCalculateNoiseMetrics(
+                pcmData,
+                readSize,
+                SAMPLE_RATE,
+                calibrationOffset
+        );
+
+// 2. Calculate A-weighted FFT spectrum (in dBA)
+        float[] spectrum = nativeCalculateFFT(
+                pcmData,
+                readSize,
+                NUM_SPECTRUM_BARS,
+                calibrationOffset
+        );
+
+        double laeq = Double.NaN;
+        double lamax = Double.NaN;
+        double lamin = Double.NaN;
 
         if (metrics != null && metrics.length >= 3) {
-            double laeq = metrics[0];
-            double lamax = metrics[1];
-            double lamin = metrics[2];
 
-            // Cập nhật Min / Max
-            if (lamin < minDba) minDba = lamin;
-            if (lamax > maxDba) maxDba = lamax;
+            laeq = metrics[0];
+            lamax = metrics[1];
+            lamin = metrics[2];
 
-            // Đẩy kết quả về Main Thread (UI Thread) để cập nhật giao diện
-            mainHandler.post(() -> {
-                if (!isRecording) return; // Tránh cập nhật trễ sau khi bấm Dừng
+            // Only update Min/Max when C++ returns valid values
+            if (Double.isFinite(lamin)) {
+                minDba = Math.min(minDba, lamin);
+            }
 
-                tvDbaValue.setText(String.format(Locale.US, "%.1f dBA", laeq));
-                tvMinMax.setText(String.format(Locale.US, "Min: %.1f dBA | Max: %.1f dBA", minDba, maxDba));
-
-                if (spectrum != null) {
-                    spectrumView.updateSpectrum(spectrum);
-                }
-            });
+            if (Double.isFinite(lamax)) {
+                maxDba = Math.max(maxDba, lamax);
+            }
         }
+
+        // Prepare UI text
+        final String laeqText = Double.isFinite(laeq)
+                ? String.format(Locale.US, "%.1f dBA", laeq)
+                : "— dBA";
+
+        final String minText = minDba == Double.MAX_VALUE
+                ? "—"
+                : String.format(Locale.US, "%.1f", minDba);
+
+        final String maxText = maxDba == -Double.MAX_VALUE
+                ? "—"
+                : String.format(Locale.US, "%.1f", maxDba);
+
+        // Update UI on Main Thread
+        mainHandler.post(() -> {
+
+            if (!isRecording) return;
+
+            tvDbaValue.setText(laeqText);
+
+            tvMinMax.setText(
+                    String.format(
+                            Locale.US,
+                            "Min: %s dBA | Max: %s dBA",
+                            minText,
+                            maxText
+                    )
+            );
+
+            if (spectrum != null) {
+                spectrumView.updateSpectrum(spectrum);
+            }
+        });
     }
 
     // ================= DỪNG THU ÂM & QUẢN LÝ VÒNG ĐỜI =================
