@@ -10,6 +10,8 @@ import android.view.View;
 
 import androidx.annotation.Nullable;
 
+import java.util.Locale;
+
 public class SpectrumView extends View {
     private Paint barPaint;
     private Paint gridPaint;
@@ -18,11 +20,15 @@ public class SpectrumView extends View {
     private Paint legendPaint;
 
     private float[] magnitudes = new float[32]; // 32 cột tần số
-
+    private final double[] freqValues = {
+            20, 100, 1000, 5000, 20000
+    };
     // Nhãn mốc tần số cho Trục Hoành (X-Axis)
-    private final String[] freqLabels = {"20Hz", "100Hz", "500Hz", "1kHz", "5kHz", "10kHz", "20kHz"};
+    private final String[] freqLabels = {
+            "20Hz", "100Hz", "1kHz", "5kHz", "20kHz"
+    };
     // Nhãn mốc cường độ cho Trục Tung (Y-Axis)
-    private final int[] dbLabels = {100, 75, 50, 25, 0};
+    private final int[] levelLabels = {100, 75, 50, 25, 0};
 
     public SpectrumView(Context context) {
         super(context);
@@ -86,7 +92,7 @@ public class SpectrumView extends View {
         int height = getHeight();
 
         // Định nghĩa khoảng lề (Padding) để chừa chỗ ghi chữ cho các trục và Legend
-        float leftPadding = dpToPx(44);   // Chừa chỗ bên trái cho trục Y (dB)
+        float leftPadding = dpToPx(54);   // Chừa chỗ bên trái cho trục Y (dB)
         float rightPadding = dpToPx(14);  // Chừa lề phải
         float topPadding = dpToPx(34);    // Chừa chỗ phía trên cho Chú thích màu (Legend)
         float bottomPadding = dpToPx(28); // Chừa chỗ bên dưới cho trục X (Hz)
@@ -108,16 +114,26 @@ public class SpectrumView extends View {
 
         // ================= 2. VẼ TRỤC TUNG (ĐƠN VỊ: dB) & ĐƯỜNG LƯỚI NGANG =================
         textPaint.setTextAlign(Paint.Align.RIGHT);
-        for (int db : dbLabels) {
-            // Tính tọa độ Y tương ứng với mức dB (từ 0 đến 100)
-            float ratio = 1f - (db / 100f);
+
+        for (int level : levelLabels) {
+
+            float ratio = 1f - (level / 100f);
             float y = chartTop + ratio * chartHeight;
 
-            // Vẽ đường lưới ngang
-            canvas.drawLine(chartLeft, y, chartRight, y, gridPaint);
+            canvas.drawLine(
+                    chartLeft, y,
+                    chartRight, y,
+                    gridPaint
+            );
 
-            // Vẽ nhãn đơn vị dB bên trái trục tung
-            canvas.drawText(db + " dB", chartLeft - dpToPx(6), y + dpToPx(3), textPaint);
+            double dbfs = -110.0 + level * 0.8;
+
+            canvas.drawText(
+                    String.format(Locale.US, "%.0f dBFS", dbfs),
+                    chartLeft - dpToPx(6),
+                    y + dpToPx(3),
+                    textPaint
+            );
         }
 
         // ================= 3. VẼ CÁC CỘT PHỔ TẦN SỐ =================
@@ -153,15 +169,35 @@ public class SpectrumView extends View {
         // Đường trục Hoành (X)
         canvas.drawLine(chartLeft, chartBottom, chartRight, chartBottom, axisPaint);
 
-        // ================= 5. VẼ TRỤC HOÀNH (ĐƠN VỊ: TẦN SỐ Hz / kHz) =================
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        int labelCount = freqLabels.length;
-        for (int i = 0; i < labelCount; i++) {
-            float x = chartLeft + (i * chartWidth / (labelCount - 1));
-            // Vẽ vạch chia nhỏ trên trục hoành
-            canvas.drawLine(x, chartBottom, x, chartBottom + dpToPx(4), axisPaint);
-            // Vẽ chữ tần số (20Hz -> 20kHz)
-            canvas.drawText(freqLabels[i], x, chartBottom + dpToPx(16), textPaint);
+        // ================= 5. VẼ TRỤC HOÀNH LOGARITHMIC =================
+        for (int i = 0; i < freqValues.length; i++) {
+
+            double ratio = Math.log(freqValues[i] / 20.0)
+                    / Math.log(20000.0 / 20.0);
+
+            float x = chartLeft + (float) ratio * chartWidth;
+
+            canvas.drawLine(
+                    x, chartBottom,
+                    x, chartBottom + dpToPx(4),
+                    axisPaint
+            );
+
+            // Căn chỉnh nhãn
+            if (i == 0) {
+                textPaint.setTextAlign(Paint.Align.LEFT);
+            } else if (i == freqValues.length - 1) {
+                textPaint.setTextAlign(Paint.Align.RIGHT);
+            } else {
+                textPaint.setTextAlign(Paint.Align.CENTER);
+            }
+
+            canvas.drawText(
+                    freqLabels[i],
+                    x,
+                    chartBottom + dpToPx(16),
+                    textPaint
+            );
         }
     }
 

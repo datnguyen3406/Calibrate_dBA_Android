@@ -31,6 +31,7 @@ public class MainActivity extends AppCompatActivity {
     // 2. Khai báo 2 hàm native
     public native double[] nativeCalculateNoiseMetrics(short[] pcmData, int readSize, int sampleRate, double calibrationOffsetDbA);
     public native float[] nativeCalculateFFT(short[] pcmData, int readSize, int numBars);
+    public native void nativeResetMeasurement();
 
     private static final int REQUEST_RECORD_AUDIO_PERMISSION = 200;
     private static final int SAMPLE_RATE = 44100; // Tần số lấy mẫu chuẩn 44.1kHz
@@ -160,6 +161,8 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "Khởi tạo AudioRecord thất bại!", Toast.LENGTH_SHORT).show();
             return;
         }
+
+        nativeResetMeasurement();
 
         audioRecord.startRecording();
         isRecording = true;
